@@ -16,6 +16,7 @@ class TestLexer(TestCase):
             ("!=", Token.NotEqualsToken),
             ("(", Token.OpenParToken),
             (")", Token.ClosedParToken),
+            ("re", Token.RegexToken),
         ]
         for c in cases:
             l = Lexer(c[0], 0)
@@ -96,6 +97,9 @@ class TestSelector(TestCase):
             ("!x", {"y": "z"}, True),
             ("x>1", {"x": "2"}, True),
             ("x<1", {"x": "0"}, True),
+            ("x re ^dog", {"x": "doggy"}, True),
+            ("x in (a, b)", {"x": "b"}, True),
+            ("x notin (a, b)", {"x": "c"}, True),
             ("x=z", {}, False),
             ("x=z", {"x": "y"}, False),
             ("x=z,y=w", {"x": "w", "y": "w"}, False),
@@ -104,6 +108,9 @@ class TestSelector(TestCase):
             ("!x", {"x": "z"}, False),
             ("x>1", {"x": "0"}, False),
             ("x<1", {"x": "2"}, False),
+            ("x re ^dog", {"x": "dooggy"}, False),
+            ("x in (a, b)", {"x": "c"}, False),
+            ("x notin (a, b)", {"x": "b"}, False),
         ]
         for c in cases:
             sel = c[0]

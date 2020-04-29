@@ -11,6 +11,7 @@ class Operator(Enum):
     Exists = "exists"
     GreaterThan = "gt"
     LessThan = "lt"
+    Regex = "re"
 
 
 class Token(Enum):
@@ -27,6 +28,7 @@ class Token(Enum):
     NotEqualsToken = auto()
     NotInToken = auto()
     OpenParToken = auto()
+    RegexToken = auto()
 
 
 token_map = {
@@ -40,6 +42,7 @@ token_map = {
     "!=": Token.NotEqualsToken,
     "notin": Token.NotInToken,
     "(": Token.OpenParToken,
+    "re": Token.RegexToken,
 }
 
 
@@ -48,7 +51,7 @@ class Requirement:
         if operator in (Operator("in"), Operator("notin")):
             if len(values) == 0:
                 raise Exception("for 'in', 'notin' operators, values set can't be empty")
-        elif operator in (Operator("="), Operator("!=")):
+        elif operator in (Operator("="), Operator("!="), Operator("re")):
             if len(values) != 1:
                 raise Exception("exact-match compatibility requires one single value")
         elif operator in (Operator("exists"), Operator("!")):
@@ -87,6 +90,9 @@ class Requirement:
             return self.key in kvs
         elif self.operator == Operator("!"):
             return self.key not in kvs
+        elif self.operator == Operator("re"):
+            import re
+            return self.key in kvs and re.match(self.values[0], kvs.get(self.key))
         elif self.operator in (Operator("gt"), Operator("lt")):
             if self.key not in kvs:
                 return False
@@ -256,6 +262,8 @@ class Parser:
             op = Operator.NotIn
         elif tok == Token.NotEqualsToken:
             op = Operator.NotEquals
+        elif tok == Token.RegexToken:
+            op = Operator.Regex
         else:
             raise Exception(f"found '{lit}', expected: '=', '!=', '==', 'in', 'notin'")
         return op
@@ -263,10 +271,11 @@ class Parser:
     def parse_values(self):
         tok, lit = self.consume(ParserContext.Values)
         if tok != Token.OpenParToken:
-            tok, lit = self.lookahead(ParserContext.Values)
+            raise Exception(f"found '{lit}', expected: '('")
+        tok, lit = self.lookahead(ParserContext.Values)
         if tok in (Token.IdentifierToken, Token.CommaToken):
             s = self.parse_identifiers_list()
-            tok = self.consume(ParserContext.Values)
+            tok, lit = self.consume(ParserContext.Values)
             if tok != Token.ClosedParToken:
                 raise Exception(f"found '{lit}', expected: ')'")
             return s
@@ -284,9 +293,10 @@ class Parser:
                 tok2, lit2 = self.lookahead(ParserContext.Values)
                 if tok2 == Token.CommaToken:
                     s.insert("")
-                if tok2 == Token.ClosedParToken:
+                elif tok2 == Token.ClosedParToken:
                     return s
-                raise Exception(f"found '{lit2}', expected: ',' or ')'")
+                else:
+                    raise Exception(f"found '{lit2}', expected: ',' or ')'")
             elif tok == Token.CommaToken:
                 tok2, lit2 = self.lookahead(ParserContext.Values)
                 if tok2 == Token.ClosedParToken:
@@ -318,7 +328,7 @@ class Parser:
         values = StringSet()
         if operator in (Operator.In, Operator.NotIn):
             values = self.parse_values()
-        elif operator in (Operator.Equals, Operator.NotEquals, Operator.GreaterThan, Operator.LessThan):
+        elif operator in (Operator.Equals, Operator.NotEquals, Operator.GreaterThan, Operator.LessThan, Operator.Regex):
             values = self.parse_exact_values()
         return Requirement(key, operator, values.list())
 
