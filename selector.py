@@ -17,7 +17,7 @@ class Token(Enum):
     UnknownToken = auto()
     EndOfStringToken = auto()
     IdentifierToken = auto()
-    CloseParToken = auto()
+    ClosedParToken = auto()
     CommaToken = auto()
     DoesNotExistToken = auto()
     EqualsToken = auto()
@@ -30,16 +30,16 @@ class Token(Enum):
 
 
 token_map = {
-    ")":     Token.ClosedParToken,
-    ",":     Token.CommaToken,
-    "!":     Token.DoesNotExistToken,
-    "=":     Token.EqualsToken,
-    ">":     Token.GreaterThanToken,
-    "in":    Token.InToken,
-    "<":     Token.LessThanToken,
-    "!=":    Token.NotEqualsToken,
+    ")": Token.ClosedParToken,
+    ",": Token.CommaToken,
+    "!": Token.DoesNotExistToken,
+    "=": Token.EqualsToken,
+    ">": Token.GreaterThanToken,
+    "in": Token.InToken,
+    "<": Token.LessThanToken,
+    "!=": Token.NotEqualsToken,
     "notin": Token.NotInToken,
-    "(":     Token.OpenParToken,
+    "(": Token.OpenParToken,
 }
 
 
@@ -53,8 +53,8 @@ class Requirement:
                 raise Exception("exact-match compatibility requires one single value")
         elif operator in (Operator("exists"), Operator("!")):
             if len(values) != 0:
-                raise Exception("values set must be empty for exists and does not exist")
-        elif operator in (Operator(">"), Operator("<")):
+                raise Exception(f"values: {values} set must be empty for exists and does not exist")
+        elif operator in (Operator("gt"), Operator("lt")):
             if len(values) != 1:
                 raise Exception("for 'gt', 'lt' operators, exactly one value is required")
             for v in values:
@@ -87,17 +87,25 @@ class Requirement:
             return self.key in kvs
         elif self.operator == Operator("!"):
             return self.key not in kvs
-        elif self.operator in (Operator(">"), Operator("<")):
+        elif self.operator in (Operator("gt"), Operator("lt")):
             if self.key not in kvs:
                 return False
-            return (self.operator == Operator(">") and kvs.get(self.key) > int(self.values[0])) or \
-                   (self.operator == Operator("<") and kvs.get(self.key) < int(self.values[0]))
+            return (self.operator == Operator("gt") and int(kvs.get(self.key)) > int(self.values[0])) or \
+                   (self.operator == Operator("lt") and int(kvs.get(self.key)) < int(self.values[0]))
         return False
 
 
 class Selector:
-    def __index__(self, requirements: List[Requirement]):
+    def __init__(self, requirements=None):
+        if requirements is None:
+            requirements = []
         self.requirements = requirements
+
+    def matches(self, kvs):
+        for r in self.requirements:
+            if not r.matches(kvs):
+                return False
+        return True
 
 
 def is_whitespace(char):
@@ -115,12 +123,12 @@ class ScannedItem:
 
 
 class Lexer:
-    def __init__(self, s: str):
+    def __init__(self, s: str, pos: int = 0):
         self.s = s
-        self.pos = 0
+        self.pos = pos
 
     def read(self):
-        b = ""
+        b = 0
         if self.pos < len(self.s):
             b = self.s[self.pos]
             self.pos += 1
@@ -139,25 +147,25 @@ class Lexer:
         buffer = ""
         while True:
             char = self.read()
-            if char == "":
+            if char == 0:
                 break
             elif is_special_symbol(char) or is_whitespace(char):
                 self.unread()
                 break
             else:
-                buffer += char
+                buffer = buffer + char
         if buffer in token_map:
             return token_map[buffer], buffer
         return Token.IdentifierToken, buffer
 
     def scan_special_symbol(self):
-        last_scanned_item = ScannedItem()
+        last_scanned_item = None
         buffer = ""
         while True:
             char = self.read()
-            if char == "":
+            if char == 0:
                 break
-            if is_special_symbol(char):
+            elif is_special_symbol(char):
                 buffer += char
                 if buffer in token_map:
                     last_scanned_item = ScannedItem(tok=token_map[buffer], literal=buffer)
@@ -167,13 +175,16 @@ class Lexer:
                 else:
                     self.unread()
                     break
+            else:
+                self.unread()
+                break
         if last_scanned_item.tok == Token.UnknownToken:
             return Token.UnknownToken, f"Error expected: keyword found {buffer}"
         return last_scanned_item.tok, last_scanned_item.literal
 
     def lex(self):
         char = self.skip_whitespaces(self.read())
-        if char == "":
+        if char == 0:
             return Token.EndOfStringToken, ""
         elif is_special_symbol(char):
             self.unread()
@@ -188,7 +199,9 @@ class ParserContext(Enum):
 
 
 class Parser:
-    def __index__(self, lexer: Lexer, scanned_items: List[ScannedItem], position: int):
+    def __init__(self, lexer: Lexer, scanned_items=None, position=0):
+        if scanned_items is None:
+            scanned_items = []
         self.lexer = lexer
         self.scanned_items = scanned_items
         self.position = position
@@ -202,7 +215,7 @@ class Parser:
 
     def consume(self, context: ParserContext):
         self.position += 1
-        tok, lit = self.scanned_items[self.position-1].tok, self.scanned_items[self.position-1].literal
+        tok, lit = self.scanned_items[self.position - 1].tok, self.scanned_items[self.position - 1].literal
         if context == ParserContext.Values:
             if tok in (Token.InToken, Token.NotInToken):
                 tok = Token.IdentifierToken
@@ -226,7 +239,7 @@ class Parser:
         t, l = self.lookahead(ParserContext.Values)
         if t in (Token.EndOfStringToken, Token.CommaToken):
             if operator != Operator.DoesNotExist:
-                operator = operator.Exists
+                operator = Operator.Exists
         return literal, operator
 
     def parse_operator(self):
@@ -254,10 +267,10 @@ class Parser:
         if tok in (Token.IdentifierToken, Token.CommaToken):
             s = self.parse_identifiers_list()
             tok = self.consume(ParserContext.Values)
-            if tok != Token.CloseParToken:
+            if tok != Token.ClosedParToken:
                 raise Exception(f"found '{lit}', expected: ')'")
             return s
-        elif tok == Token.CloseParToken:
+        elif tok == Token.ClosedParToken:
             self.consume(ParserContext.Values)
             return StringSet("")
         raise Exception(f"found '{lit}', expected: ',', ')'")
@@ -271,12 +284,12 @@ class Parser:
                 tok2, lit2 = self.lookahead(ParserContext.Values)
                 if tok2 == Token.CommaToken:
                     s.insert("")
-                if tok2 == Token.CloseParToken:
+                if tok2 == Token.ClosedParToken:
                     return s
                 raise Exception(f"found '{lit2}', expected: ',' or ')'")
             elif tok == Token.CommaToken:
                 tok2, lit2 = self.lookahead(ParserContext.Values)
-                if tok2 == Token.CloseParToken:
+                if tok2 == Token.ClosedParToken:
                     s.insert("")
                     return s
                 if tok2 == Token.CommaToken:
@@ -285,19 +298,51 @@ class Parser:
             else:
                 return s
 
-
+    def parse_exact_values(self):
+        s = StringSet()
+        tok, lit = self.lookahead(ParserContext.Values)
+        if tok in (Token.EndOfStringToken, Token.CommaToken):
+            s.insert("")
+            return s
+        tok, lit = self.consume(ParserContext.Values)
+        if tok == Token.IdentifierToken:
+            s.insert(lit)
+            return s
+        raise Exception(f"found '{lit}', expected: identifier")
 
     def parse_requirement(self):
-        key, operator = pass
+        key, operator = self.parse_key_and_infer_operator()
+        if operator in (Operator.Exists, Operator.DoesNotExist):
+            return Requirement(key, operator, [])
+        operator = self.parse_operator()
+        values = StringSet()
+        if operator in (Operator.In, Operator.NotIn):
+            values = self.parse_values()
+        elif operator in (Operator.Equals, Operator.NotEquals, Operator.GreaterThan, Operator.LessThan):
+            values = self.parse_exact_values()
+        return Requirement(key, operator, values.list())
 
     def parse(self):
         self.scan()
-
-        requirements = List[Requirement]
+        requirements = []
         while True:
-            tok, lit = self.lookahead()
+            tok, lit = self.lookahead(ParserContext.Values)
             if tok in (Token.IdentifierToken, Token.DoesNotExistToken):
-                r = self.parse
+                r = self.parse_requirement()
+                requirements.append(r)
+                t, l = self.consume(ParserContext.Values)
+                if t == Token.EndOfStringToken:
+                    return requirements
+                elif t == Token.CommaToken:
+                    t2, l2 = self.lookahead(ParserContext.Values)
+                    if t2 not in (Token.IdentifierToken, Token.DoesNotExistToken):
+                        raise Exception(f"found '{l2}', expected: identifier after ','")
+                else:
+                    raise Exception(f"found '{l}', expected: ',' or 'end of string'")
+            elif tok == Token.EndOfStringToken:
+                return requirements
+            else:
+                raise Exception(f"found '{lit}', expected: !, identifier, or 'end of string'")
 
 
 class StringSet:
@@ -309,6 +354,12 @@ class StringSet:
         for item in items:
             self.set[item] = True
 
+    def list(self):
+        return list(self.set.keys())
 
-def parse_selector(desc: str) -> Selector:
-    pass
+
+def parse(selector: str):
+    p = Parser(Lexer(selector))
+    items = p.parse()
+    items.sort(key=lambda x: x.key)
+    return Selector(items)
